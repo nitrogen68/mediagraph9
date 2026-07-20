@@ -208,6 +208,39 @@
         </div>
     </div>
 
+    <!-- Modal Video Player -->
+<div id="videoModal" class="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-md hidden items-center justify-center p-4 transition-opacity">
+    <div class="relative w-full max-w-3xl bg-slate-900 border border-white/10 rounded-[2rem] overflow-hidden shadow-2xl flex flex-col">
+        
+        <!-- Header & Tombol Close -->
+        <div class="absolute top-4 right-4 z-50 flex gap-2">
+            <button onclick="closeVideoModal()" class="w-10 h-10 bg-black/50 hover:bg-red-500 text-white rounded-full flex items-center justify-center backdrop-blur-md border border-white/10 hover:border-red-500 transition-all shadow-lg">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <!-- Area Video Player -->
+        <div class="aspect-video bg-black w-full flex items-center justify-center relative">
+            <video id="modalVideoPlayer" controls playsinline class="w-full h-full object-contain shadow-inner"></video>
+        </div>
+        
+        <!-- Footer & Tombol Download -->
+        <div class="p-5 bg-slate-900 flex justify-between items-center border-t border-white/5">
+            <span class="text-xs text-slate-400 font-mono truncate mr-4">Preview Player</span>
+            <button id="modalDownloadBtn" class="bg-blue-600 hover:bg-blue-500 text-white font-black text-sm py-3 px-6 rounded-xl flex items-center gap-2 transition-all active:scale-95 flex-shrink-0 shadow-lg shadow-blue-900/20">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+                DOWNLOAD
+            </button>
+        </div>
+        
+    </div>
+</div>
+
+
     <script>
         /* ==================================================
            GLOBAL STATE & INIT
@@ -297,6 +330,51 @@
             if (filter === 'tiktok') return 'TT';
             return 'SRC';
         }
+
+
+                             
+// Membuka Modal Video
+function openVideoModal(videoUrl) {
+    const modal = document.getElementById('videoModal');
+    const player = document.getElementById('modalVideoPlayer');
+    const downloadBtn = document.getElementById('modalDownloadBtn');
+    
+    // Pasang sumber video
+    player.src = videoUrl;
+    
+    // Aksi Tombol Download (Force Download Tab)
+    downloadBtn.onclick = () => {
+        const a = document.createElement('a');
+        a.href = videoUrl;
+        a.download = 'mediagraph9_download.mp4';
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    };
+    
+    // Tampilkan modal
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    
+    // Putar video otomatis jika browser mengizinkan
+    player.play().catch(e => console.log("Autoplay dicegah oleh browser"));
+}
+
+// Menutup Modal Video
+function closeVideoModal() {
+    const modal = document.getElementById('videoModal');
+    const player = document.getElementById('modalVideoPlayer');
+    
+    // Jeda video dan bersihkan src agar suara tidak bocor di background
+    player.pause();
+    player.src = '';
+    
+    // Sembunyikan modal
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
+
 
         function renderHistory(filter = 'twitter') {
             currentHistoryTab = filter;
@@ -390,10 +468,10 @@
                         videoCdn = u.replace('https://videy.co/v/?id=', 'https://cdn.videy.co/') + '.mp4';
                     }
 
-                    // 2. Render Mini Thumbnail dengan tag video
+                                        // 2. Render Mini Thumbnail yang akan memanggil Modal
                     return `
-                    <a href="${u}" target="_blank" 
-                        class="relative block w-14 h-14 rounded-lg overflow-hidden border-2 border-emerald-900/50 hover:border-emerald-500 hover:shadow-[0_0_10px_rgba(16,185,129,0.3)] transition-all duration-300 group">
+                    <div onclick="event.stopPropagation(); openVideoModal('${videoCdn}')" 
+                        class="cursor-pointer relative block w-14 h-14 rounded-lg overflow-hidden border-2 border-emerald-900/50 hover:border-emerald-500 hover:shadow-[0_0_10px_rgba(16,185,129,0.3)] transition-all duration-300 group">
                         
                         <!-- Video Mini Thumbnail (Memuat frame pertama di detik 0.1) -->
                         <video src="${videoCdn}#t=0.1" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300 bg-slate-900" preload="metadata" muted playsinline></video>
@@ -409,8 +487,9 @@
                         <div class="absolute top-0 right-0 bg-black/70 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-bl-lg backdrop-blur-sm">
                             ${i + 1}
                         </div>
-                    </a>
+                    </div>
                     `;
+
                 }).join('')}  
             </div> 
                 </div>`;  
