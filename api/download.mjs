@@ -176,6 +176,30 @@ async function tryCobalt(url) {
   return null;
 }
 
+export function extractWavyUrlsFromPayload(payload) {
+  const data = payload?.result || payload?.data || payload;
+  if (!data) return null;
+
+  let wavyUrls = [];
+  if (Array.isArray(data.url)) wavyUrls = data.url;
+  else if (typeof data.url === 'string') wavyUrls = [data.url];
+  else if (Array.isArray(data.urls)) wavyUrls = data.urls;
+  else if (typeof data.href === 'string') wavyUrls = [data.href];
+
+  wavyUrls = wavyUrls
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .filter((value) => /\.mp4(?:[?#].*)?$/i.test(value) || value.includes('video'));
+
+  if (wavyUrls.length === 0) return null;
+
+  const title = data.title
+    ? `${data.author || 'User'} - ${data.title}`.trim()
+    : null;
+
+  return { urls: wavyUrls, title, method: 'Wavy API' };
+}
+
 async function tryWavidl(url) {
     console.log(`🌊 [WAVY] Mencoba Wavy API Fallback...`);
     try {
@@ -183,34 +207,115 @@ async function tryWavidl(url) {
         if (!wavyRes.ok) return null;
         
         const wavyJson = await wavyRes.json();
+        const parsed = extractWavyUrlsFromPayload(wavyJson);
+        if (parsed) {
+            return parsed;
+        }
 
         if (wavyJson?.status && wavyJson?.result) {
-            let wavyData = wavyJson.result;
-            let wavyUrls = [];
-
-            if (Array.isArray(wavyData.url)) wavyUrls = wavyData.url;
-            else if (typeof wavyData.url === 'string') wavyUrls = [wavyData.url];
-            else if (Array.isArray(wavyData.urls)) wavyUrls = wavyData.urls;
-
-            wavyUrls = wavyUrls.filter(u => u.includes('.mp4'));
-
-            if (wavyUrls.length > 0) {
-                let title = null;
-                if (wavyData.title) {
-                    title = `${wavyData.author || 'User'} - ${wavyData.title}`;
-                }
-
-                return { 
-                    urls: wavyUrls, 
-                    title: title,
-                    method: "Wavy API" 
-                };
-            }
+            const fallbackPayload = wavyJson.result;
+            const fallbackParsed = extractWavyUrlsFromPayload(fallbackPayload);
+            if (fallbackParsed) return fallbackParsed;
         }
     } catch (e) {
         console.log("Wavy Error:", e.message)
     }
     return null;
+}
+
+function normalizeMediaUrl(rawValue) {
+  if (!rawValue) return null;
+  let value = String(rawValue).trim();
+  if (!value) return null;
+  value = value.replace(/^['"]|['"]$/g, '').replace(/&amp;/g, '&').replace(/\\u0026/g, '&');
+  const match = value.match(/https?:\/\/[^\s"'<>]+/i);
+  if (!match) return null;
+  let normalized = match[0];
+  if (normalized.startsWith('//')) normalized = `https:${normalized}`;
+  return normalized;
+}
+
+export function extractMediaUrlsFromHtml(html) {
+  const discovered = new Set();
+  const addCandidate = (value) => {
+    const normalized = normalizeMediaUrl(value);
+    if (!normalized) return;
+    if (/\.(?:mp4|m3u8)(?:[?#].*)?$/i.test(normalized) || /video|cdninstagram|fbcdn|stream/i.test(normalized)) {
+      discovered.add(normalized);
+    }
+  };
+
+  const patterns = [
+    /https?:\/\/[^\s"'<>]+?\.(?:mp4|m3u8)(?:[?#][^\s"'<>]*)?/gi,
+    /contentUrl\s*[:=]\s*["']([^"']+)["']/gi,
+    /(?:video|playback|media)Url\s*[:=]\s*["']([^"']+)["']/gi,
+    /video_url\s*[:=]\s*["']([^"']+)["']/gi,
+    /src\s*=\s*["'](https?:\/\/[^"']+)["']/gi,
+    /<source[^>]+src=["'](https?:\/\/[^"']+)["']/gi,
+    /"(https?:\/\/[^"']+?\.(?:mp4|m3u8)(?:\?[^"']*)?)"/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of html.matchAll(pattern)) {
+      addCandidate(match[1] || match[0]);
+    }
+  }
+
+  const scriptBlocks = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+  for (const script of scriptBlocks) {
+    for (const pattern of patterns) {
+      for (const match of script.matchAll(pattern)) {
+        addCandidate(match[1] || match[0]);
+      }
+    }
+  }
+
+  return [...discovered];
+}
+
+function extractTitleFromHtml(html) {
+  const metaTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+  if (metaTitle) return metaTitle[1].replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').trim();
+  const titleTag = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  if (titleTag) return titleTag[1].trim();
+  return null;
+}
+
+async function tryHtmlPageExtraction(url, platform) {
+  const candidateUrls = [url];
+
+  if (platform === 'IG') {
+    const shortcodeMatch = url.match(/instagram\.com\/(?:p|reel|tv)\/([^/?#]+)/i);
+    if (shortcodeMatch?.[1]) {
+      candidateUrls.push(`https://www.instagram.com/p/${shortcodeMatch[1]}/embed/captioned/`);
+    }
+    candidateUrls.push(`${url.replace(/\/$/, '')}/embed/captioned/`);
+  } else if (platform === 'FB') {
+    candidateUrls.push(`https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}`);
+  } else if (platform === 'X') {
+    candidateUrls.push(`https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}`);
+  }
+
+  for (const candidateUrl of candidateUrls) {
+    try {
+      const response = await fetch(candidateUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      });
+      if (!response.ok) continue;
+      const html = await response.text();
+      const extractedUrls = extractMediaUrlsFromHtml(html);
+      if (extractedUrls.length > 0) {
+        return {
+          urls: extractedUrls,
+          title: extractTitleFromHtml(html)
+        };
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 async function uploadToVidey(remoteUrl) {
@@ -280,14 +385,26 @@ export default async function handler(req, res) {
     let finalVideoUrls = [];
     let methodUsed = "";
     let forceTitle = null;
+    const attemptedMethods = [];
+    const platformCode = isIG ? 'IG' : isFB ? 'FB' : isTT ? 'TT' : isX ? 'X' : 'MEDIA';
 
     if (isFB || isIG) {
-        const platformCode = isIG ? 'IG' : 'FB';
         const metaBypass = await tryMetaBypass(targetUrl, platformCode);
+        attemptedMethods.push('Ferdev API');
         if (metaBypass && metaBypass.urls.length > 0) {
             finalVideoUrls = metaBypass.urls;
             if (metaBypass.title) forceTitle = metaBypass.title;
             methodUsed = "Ferdev API";
+        }
+    }
+
+    if (finalVideoUrls.length === 0) {
+        attemptedMethods.push('HTML Page Extraction');
+        const htmlBypass = await tryHtmlPageExtraction(targetUrl, platformCode);
+        if (htmlBypass && htmlBypass.urls.length > 0) {
+            finalVideoUrls = htmlBypass.urls;
+            if (htmlBypass.title) forceTitle = htmlBypass.title;
+            methodUsed = "HTML Page Extraction";
         }
     }
 
@@ -316,11 +433,6 @@ export default async function handler(req, res) {
     }
 
     if (finalVideoUrls.length === 0) {
-        const cobUrl = await tryCobalt(targetUrl);
-        if (cobUrl) { finalVideoUrls = [cobUrl]; methodUsed = "Cobalt System"; }
-    }
-
-    if (finalVideoUrls.length === 0) {
         const wavy = await tryWavidl(targetUrl);
         if (wavy && wavy.urls.length > 0) {
             finalVideoUrls = wavy.urls;
@@ -329,7 +441,22 @@ export default async function handler(req, res) {
         }
     }
 
-    if (finalVideoUrls.length === 0) return res.status(404).json({ success: false, error: "Gagal ekstrak." });
+    if (finalVideoUrls.length === 0) {
+        const cobUrl = await tryCobalt(targetUrl);
+        if (cobUrl) { finalVideoUrls = [cobUrl]; methodUsed = "Cobalt System"; }
+    }
+
+    if (finalVideoUrls.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Tidak ada media yang ditemukan. Coba tautan publik yang valid atau gunakan URL yang langsung mengarah ke video.",
+        debug: {
+          platform: platformLabel,
+          targetUrl,
+          attemptedMethods: attemptedMethods.filter(Boolean)
+        }
+      });
+    }
 
     const videyLinks = [];
     let totalSizeInBytes = 0;

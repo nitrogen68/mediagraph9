@@ -561,9 +561,9 @@ function closeVideoModal() {
                     throw new Error(`Invalid JSON response: ${responseText.substring(0, 100)}`);
                 }
                 
-                if (response.status === 404 || response.status === 500) {
+                if (!data.success || !data.data?.videyUrls || data.data.videyUrls.length === 0) {
                     const errorDetail = typeof data.error === 'object' ? JSON.stringify(data.error, null, 2) : (data.error || 'Error occurred');
-                    const extraDetail = response.status === 404 ? JSON.stringify(data.debug || {}, null, 2) : (typeof data.stack === 'object' ? JSON.stringify(data.stack, null, 2) : (data.stack || 'N/A'));
+                    const extraDetail = typeof data.debug === 'object' ? JSON.stringify(data.debug, null, 2) : (data.debug || 'N/A');
                     const title = response.status === 404 ? '404 - Media Tidak Ditemukan' : '500 - Server Error';
                     
                     showErrorModal(`${title}\n\nDetail:\n${errorDetail}\n\nTambahan:\n${extraDetail}`);
@@ -572,7 +572,6 @@ function closeVideoModal() {
                     return;
                 }
 
-                                
                 if (data.success && data.data?.videyUrls && data.data.videyUrls.length > 0) {
 
                     if (data.data.fileSizeInBytes) {
@@ -600,8 +599,11 @@ function closeVideoModal() {
                     resultWrapper.classList.remove('hidden');
 
                 } else {
-    alert("Gagal: Response tidak sesuai\n" + JSON.stringify(data, null, 2));
-}
+                    const errorDetail = typeof data.error === 'object' ? JSON.stringify(data.error, null, 2) : (data.error || 'Response tidak sesuai');
+                    showErrorModal(`Ekstraksi gagal\n\nDetail:\n${errorDetail}`);
+                    jsonEl.textContent = JSON.stringify(data, null, 2);
+                    resultWrapper.classList.remove('hidden');
+                }
                 
                 
             } catch (err) {
