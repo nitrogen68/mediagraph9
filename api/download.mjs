@@ -3,7 +3,6 @@ import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { fileURLToPath } from 'url';
 
 async function expandUrl(url) {
   try {
@@ -28,19 +27,27 @@ async function getFacebookDetails(url) {
         const titleMatch = html.match(/<meta property="og:title" content="(.*?)"/i);
         
         if (titleMatch) {
+            // 1. Decode HTML Entities dasar dulu
             let rawTitle = titleMatch[1]
                 .replace(/&#x27;/g, "'")
                 .replace(/&quot;/g, '"')
                 .replace(/&amp;/g, '&');
 
+            // 2. Pisahkan berdasarkan simbol pemisah umum Meta: # (hashtag), | (pipe), atau - (strip)
             let cleanName = rawTitle.split(/[#|\-·]/)[0].trim();
 
+            // 3. Jika setelah dipisahkan hasilnya terlalu pendek, 
+            // kemungkinan nama aslinya memang mengandung simbol tersebut.
+            // Kita gunakan filter cadangan untuk hanya membuang hashtag.
             if (cleanName.length < 2) {
                 cleanName = rawTitle.replace(/#\w+/g, '').trim();
             }
 
+            // 4. Baru bersihkan karakter aneh yang tersisa (estetika)
+            // Tetap izinkan spasi, titik, dan tanda petik agar nama seperti "O'Connor" tidak rusak.
             cleanName = cleanName.replace(/[^\w\d\s'.]/g, '').trim();
 
+            // 5. Validasi akhir: Jangan kembalikan jika judulnya cuma "Facebook" atau "Login"
             const blacklist = ["facebook", "log in", "masuk", "reels"];
             if (blacklist.some(word => cleanName.toLowerCase() === word)) {
                 return null;
@@ -111,8 +118,8 @@ async function tryMetaBypass(url, platform) {
             if (json.data.dlink) videos.push(json.data.dlink);
             if (json.data.metadata && json.data.metadata.title) {
                 fetchedTitle = json.data.metadata.username 
-                    ? `@${json.data.metadata.username} - ${json.data.metadata.title.substring(0, 100)}`
-                    : json.data.metadata.title.substring(0, 100);
+                    ? `@${json.data.metadata.username} - ${json.data.metadata.title.substring(0, 45)}...`
+                    : json.data.metadata.title.substring(0, 45) + "...";
             }
         } 
         else if (platform === 'FB') {
@@ -122,7 +129,7 @@ async function tryMetaBypass(url, platform) {
                 videos.push(vidUrl);
             }
             if (json.data.title && json.data.title.toLowerCase() !== "unknown") {
-                fetchedTitle = json.data.title.substring(0, 100);
+                fetchedTitle = json.data.title.substring(0, 45) + "...";
             }
         }
         if (videos.length > 0) {
@@ -146,6 +153,7 @@ async function tryVxTwitter(url) {
         if (videos.length > 0) {
             let rawText = json.text || "Video";
             let cleanText = rawText.replace(/https?:\/\/\S+/g, '').trim();
+            if (cleanText.length > 45) cleanText = cleanText.substring(0, 45) + "...";
             return { urls: videos, title: `@${json.user_screen_name} - ${cleanText || "Video"}` };
         }
     }
@@ -177,30 +185,6 @@ async function tryCobalt(url) {
   return null;
 }
 
-export function extractWavyUrlsFromPayload(payload) {
-  const data = payload?.result || payload?.data || payload;
-  if (!data) return null;
-
-  let wavyUrls = [];
-  if (Array.isArray(data.url)) wavyUrls = data.url;
-  else if (typeof data.url === 'string') wavyUrls = [data.url];
-  else if (Array.isArray(data.urls)) wavyUrls = data.urls;
-  else if (typeof data.href === 'string') wavyUrls = [data.href];
-
-  wavyUrls = wavyUrls
-    .filter(Boolean)
-    .map((value) => String(value).trim())
-    .filter((value) => /\.mp4(?:[?#].*)?$/i.test(value) || value.includes('video'));
-
-  if (wavyUrls.length === 0) return null;
-
-  const title = data.title
-    ? `${data.author || 'User'} - ${data.title}`.trim()
-    : null;
-
-  return { urls: wavyUrls, title, method: 'Wavy API' };
-}
-
 async function tryWavidl(url) {
     console.log(`🌊 [WAVY] Mencoba Wavy API Fallback...`);
     try {
@@ -208,15 +192,33 @@ async function tryWavidl(url) {
         if (!wavyRes.ok) return null;
         
         const wavyJson = await wavyRes.json();
-        const parsed = extractWavyUrlsFromPayload(wavyJson);
-        if (parsed) {
-            return parsed;
-        }
 
+        // Struktur Wavy: { status: true, result: { url: [...], title: "...", author: "..." } }
         if (wavyJson?.status && wavyJson?.result) {
-            const fallbackPayload = wavyJson.result;
-            const fallbackParsed = extractWavyUrlsFromPayload(fallbackPayload);
-            if (fallbackParsed) return fallbackParsed;
+            let wavyData = wavyJson.result;
+            let wavyUrls = [];
+
+            // Wavy kadang balikin array url, kadang string
+            if (Array.isArray(wavyData.url)) wavyUrls = wavyData.url;
+            else if (typeof wavyData.url === 'string') wavyUrls = [wavyData.url];
+            else if (Array.isArray(wavyData.urls)) wavyUrls = wavyData.urls; // jaga2
+
+            // Ambil yang .mp4 aja
+            wavyUrls = wavyUrls.filter(u => u.includes('.mp4'));
+
+            if (wavyUrls.length > 0) {
+                // Ambil title dari wavy
+                let title = null;
+                if (wavyData.title) {
+                    title = `${wavyData.author || 'User'} - ${wavyData.title.substring(0, 45)}...`;
+                }
+
+                return { 
+                    urls: wavyUrls, 
+                    title: title,
+                    method: "Wavy API" 
+                };
+            }
         }
     } catch (e) {
         console.log("Wavy Error:", e.message)
@@ -224,101 +226,7 @@ async function tryWavidl(url) {
     return null;
 }
 
-function normalizeMediaUrl(rawValue) {
-  if (!rawValue) return null;
-  let value = String(rawValue).trim();
-  if (!value) return null;
-  value = value.replace(/^['"]|['"]$/g, '').replace(/&amp;/g, '&').replace(/\\u0026/g, '&');
-  const match = value.match(/https?:\/\/[^\s"'<>]+/i);
-  if (!match) return null;
-  let normalized = match[0];
-  if (normalized.startsWith('//')) normalized = `https:${normalized}`;
-  return normalized;
-}
-
-export function extractMediaUrlsFromHtml(html) {
-  const discovered = new Set();
-  const addCandidate = (value) => {
-    const normalized = normalizeMediaUrl(value);
-    if (!normalized) return;
-    if (/\.(?:mp4|m3u8)(?:[?#].*)?$/i.test(normalized) || /video|cdninstagram|fbcdn|stream/i.test(normalized)) {
-      discovered.add(normalized);
-    }
-  };
-
-  const patterns = [
-    /https?:\/\/[^\s"'<>]+?\.(?:mp4|m3u8)(?:[?#][^\s"'<>]*)?/gi,
-    /contentUrl\s*[:=]\s*["']([^"']+)["']/gi,
-    /(?:video|playback|media)Url\s*[:=]\s*["']([^"']+)["']/gi,
-    /video_url\s*[:=]\s*["']([^"']+)["']/gi,
-    /src\s*=\s*["'](https?:\/\/[^"']+)["']/gi,
-    /<source[^>]+src=["'](https?:\/\/[^"']+)["']/gi,
-    /"(https?:\/\/[^"']+?\.(?:mp4|m3u8)(?:\?[^"']*)?)"/gi,
-  ];
-
-  for (const pattern of patterns) {
-    for (const match of html.matchAll(pattern)) {
-      addCandidate(match[1] || match[0]);
-    }
-  }
-
-  const scriptBlocks = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
-  for (const script of scriptBlocks) {
-    for (const pattern of patterns) {
-      for (const match of script.matchAll(pattern)) {
-        addCandidate(match[1] || match[0]);
-      }
-    }
-  }
-
-  return [...discovered];
-}
-
-function extractTitleFromHtml(html) {
-  const metaTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
-  if (metaTitle) return metaTitle[1].replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').trim();
-  const titleTag = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-  if (titleTag) return titleTag[1].trim();
-  return null;
-}
-
-async function tryHtmlPageExtraction(url, platform) {
-  const candidateUrls = [url];
-
-  if (platform === 'IG') {
-    const shortcodeMatch = url.match(/instagram\.com\/(?:p|reel|tv)\/([^/?#]+)/i);
-    if (shortcodeMatch?.[1]) {
-      candidateUrls.push(`https://www.instagram.com/p/${shortcodeMatch[1]}/embed/captioned/`);
-    }
-    candidateUrls.push(`${url.replace(/\/$/, '')}/embed/captioned/`);
-  } else if (platform === 'FB') {
-    candidateUrls.push(`https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}`);
-  } else if (platform === 'X') {
-    candidateUrls.push(`https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}`);
-  }
-
-  for (const candidateUrl of candidateUrls) {
-    try {
-      const response = await fetch(candidateUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-      });
-      if (!response.ok) continue;
-      const html = await response.text();
-      const extractedUrls = extractMediaUrlsFromHtml(html);
-      if (extractedUrls.length > 0) {
-        return {
-          urls: extractedUrls,
-          title: extractTitleFromHtml(html)
-        };
-      }
-    } catch (e) {
-      continue;
-    }
-  }
-
-  return null;
-}
-
+// === MODIFIKASI: uploadToVidey SEKARANG MENGEMBALIKAN OBJECT {url, size} ===
 async function uploadToVidey(remoteUrl) {
   const tempFilePath = path.join(os.tmpdir(), `vid_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp4`);
   try {
@@ -341,37 +249,24 @@ async function uploadToVidey(remoteUrl) {
         fs.writeFileSync(tempFilePath, buffer);
     }
 
+    // 1. Ambil ukuran file dari local file system
     const stats = fs.statSync(tempFilePath);
-    const downloadedSize = stats.size;
+    const downloadedSize = stats.size; 
 
     if (downloadedSize < 10240) throw new Error("File corrupt.");
-
     const fd = fs.openSync(tempFilePath, 'r');
     const bufferHead = Buffer.alloc(100);
     fs.readSync(fd, bufferHead, 0, 100, 0);
     fs.closeSync(fd);
     if (bufferHead.toString('utf8').toLowerCase().includes('<html')) throw new Error("HTML detected.");
 
-    const fileType = execSync(`file -b "${tempFilePath}"`).toString().toLowerCase();
-    if (!fileType.includes('mp4') && !fileType.includes('video') && !fileType.includes('quicktime')) {
-      throw new Error(`Unsupported file type: ${fileType}`);
-    }
-
     const cmd = `curl -s -X POST https://videy.co/api/upload -H "Origin: https://videy.co" -H "Referer: https://videy.co/" -F "file=@${tempFilePath};type=video/mp4"`;
     const result = JSON.parse(execSync(cmd).toString());
-
+    
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-
-    if (!result?.id) return null;
-
-    const videyUrl = `https://videy.co/v/?id=${result.id}`;
-    const playableCheck = await fetch(videyUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const playableHtml = await playableCheck.text();
-    const looksPlayable = playableHtml.includes('<video') && !playableHtml.toLowerCase().includes('error') && !playableHtml.toLowerCase().includes('not found');
-
-    if (!looksPlayable) return null;
-
-    return { url: videyUrl, size: downloadedSize };
+    
+    // 2. Kembalikan URL sekaligus Size
+    return result?.id ? { url: `https://videy.co/v/?id=${result.id}`, size: downloadedSize } : null;
   } catch (error) {
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return null;
@@ -401,26 +296,14 @@ export default async function handler(req, res) {
     let finalVideoUrls = [];
     let methodUsed = "";
     let forceTitle = null;
-    const attemptedMethods = [];
-    const platformCode = isIG ? 'IG' : isFB ? 'FB' : isTT ? 'TT' : isX ? 'X' : 'MEDIA';
 
     if (isFB || isIG) {
+        const platformCode = isIG ? 'IG' : 'FB';
         const metaBypass = await tryMetaBypass(targetUrl, platformCode);
-        attemptedMethods.push('Ferdev API');
         if (metaBypass && metaBypass.urls.length > 0) {
             finalVideoUrls = metaBypass.urls;
             if (metaBypass.title) forceTitle = metaBypass.title;
             methodUsed = "Ferdev API";
-        }
-    }
-
-    if (finalVideoUrls.length === 0) {
-        attemptedMethods.push('HTML Page Extraction');
-        const htmlBypass = await tryHtmlPageExtraction(targetUrl, platformCode);
-        if (htmlBypass && htmlBypass.urls.length > 0) {
-            finalVideoUrls = htmlBypass.urls;
-            if (htmlBypass.title) forceTitle = htmlBypass.title;
-            methodUsed = "HTML Page Extraction";
         }
     }
 
@@ -449,57 +332,36 @@ export default async function handler(req, res) {
     }
 
     if (finalVideoUrls.length === 0) {
-        const wavy = await tryWavidl(targetUrl);
-        if (wavy && wavy.urls.length > 0) {
-            finalVideoUrls = wavy.urls;
-            forceTitle = wavy.title;
-            methodUsed = wavy.method;
-        }
-    }
-
-    if (finalVideoUrls.length === 0) {
         const cobUrl = await tryCobalt(targetUrl);
         if (cobUrl) { finalVideoUrls = [cobUrl]; methodUsed = "Cobalt System"; }
     }
 
+
     if (finalVideoUrls.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: "Tidak ada media yang ditemukan. Coba tautan publik yang valid atau gunakan URL yang langsung mengarah ke video.",
-        debug: {
-          platform: platformLabel,
-          targetUrl,
-          attemptedMethods: attemptedMethods.filter(Boolean)
-        }
-      });
+    const wavy = await tryWavidl(targetUrl);
+    if (wavy && wavy.urls.length > 0) {
+        finalVideoUrls = wavy.urls;
+        forceTitle = wavy.title;
+        methodUsed = wavy.method;
     }
+}
+    
+
+    if (finalVideoUrls.length === 0) return res.status(404).json({ success: false, error: "Gagal ekstrak." });
 
     const videyLinks = [];
-    let totalSizeInBytes = 0;
-    let uploadFailures = 0;
+    let totalSizeInBytes = 0; // === MODIFIKASI: Inisialisasi total file size ===
 
     for (const vUrl of finalVideoUrls) {
         const uploadResult = await uploadToVidey(vUrl);
         if (uploadResult) {
-            videyLinks.push(uploadResult.url);
-            totalSizeInBytes += uploadResult.size;
-        } else {
-            uploadFailures += 1;
+            videyLinks.push(uploadResult.url); // Masukkan URL
+            totalSizeInBytes += uploadResult.size; // Tambahkan ukurannya
         }
     }
 
-    if (videyLinks.length === 0) {
-      return res.status(500).json({
-        success: false,
-        error: "Upload gagal. Tidak ada tautan video yang lolos validasi playable.",
-        debug: {
-          attemptedUrls: finalVideoUrls.length,
-          failedUploads: uploadFailures,
-          methodUsed
-        }
-      });
-    }
-            
+    if (videyLinks.length === 0) return res.status(500).json({ success: false, error: "Upload gagal." });
+
     let profileName = await metadataPromise;
 
     if (isFB && (!profileName || profileName.toLowerCase().includes('facebook'))) {
@@ -508,36 +370,17 @@ export default async function handler(req, res) {
     }
 
     const platformLabel = isFB ? "FB" : isTT ? "TikTok" : isX ? "X" : isIG ? "IG" : "Media";
-
-    // --- LOGIKA PEMISAHAN AUTHOR & TITLE YANG BERSIH ---
-    let authorText = profileName || "Tanpa nama";
-    let descText = "";
-
-    if (forceTitle) {
-        if (forceTitle.includes(' - ')) {
-            const parts = forceTitle.split(' - ');
-            authorText = parts[0].replace('@', '').trim();
-            descText = parts.slice(1).join(' - ').trim();
-        } else {
-            if (!profileName) {
-                const words = forceTitle.split(' ');
-                authorText = words[0].replace('@', '').trim();
-                descText = words.slice(1).join(' ').trim();
-            } else {
-                descText = forceTitle;
-            }
-        }
+    let finalTitle = forceTitle || profileName;
+    
+    if (!finalTitle || finalTitle.toLowerCase() === "reels" || finalTitle.toLowerCase() === "unknown") {
+        finalTitle = `${platformLabel} Video ${targetUrl.split('/').filter(p => p.length > 4).pop()?.substring(0, 8)}`;
     }
 
-    if (!descText || descText.toLowerCase() === "reels" || descText.toLowerCase() === "unknown") {
-        descText = `${platformLabel} Video ${targetUrl.split('/').filter(p => p.length > 4).pop()?.substring(0, 8) || ''}`;
-    }
-
+    // === MODIFIKASI: Tambahkan fileSizeInBytes di JSON response ===
     return res.status(200).json({
       success: true,
       data: { 
-          author: authorText,     
-          title: descText,  
+          title: finalTitle, 
           videyUrls: videyLinks, 
           method: methodUsed,
           fileSizeInBytes: totalSizeInBytes 
