@@ -568,29 +568,34 @@ function closeVideoModal() {
                     return;
                 }
 
+                                
                 if (data.success && data.data?.videyUrls && data.data.videyUrls.length > 0) {
 
-    // 1. Update stats upload
-    if (data.data.fileSizeInBytes) {
-        updateStats('upload', data.data.fileSizeInBytes);
-    }
+                    if (data.data.fileSizeInBytes) {
+                        updateStats('upload', data.data.fileSizeInBytes);
+                    }
 
-    // 2. Ambil data dengan fallback
-    const coverImg = data.data.cover || data.data.thumbnail || ''; // aman kalau null
-    const authorName = data.data.author || data.data.title?.split(' - ')[0] || 'Tanpa nama';
-    // ^ fallback: ambil dari "Nama - Judul" kalau author kosong
-    const videoTitle = data.data.title || 'Media Video';
+                    // --- BERSIHKAN JUDUL DARI QUERY LINK INSTAGRAM (?) ---
+                    let rawTitle = data.data.title || 'Media Video';
+                    // Jika judul mengandung query "?igsh=", potong atau jadikan lebih bersih
+                    if (rawTitle.includes('?igsh') || rawTitle.includes('?')) {
+                        rawTitle = rawTitle.split('?')[0].trim();
+                        if (rawTitle.toLowerCase() === 'ig video') {
+                            rawTitle = 'Instagram Reel Video';
+                        }
+                    }
 
-    // 3. Simpan ke history
-    saveToHistory(url, videoTitle, data.data.videyUrls, coverImg, authorName);
+                    const coverImg = data.data.cover || data.data.thumbnail || ''; 
+                    const authorName = data.data.author || 'Tanpa nama';
+                    const videoTitle = rawTitle;
 
-    // 4. Render
-    renderSingleVideo(data.data, url);
+                    saveToHistory(url, videoTitle, data.data.videyUrls, coverImg, authorName);
+                    renderSingleVideo(data.data, url);
 
-    jsonEl.textContent = JSON.stringify(data, null, 2);
-    resultWrapper.classList.remove('hidden');
+                    jsonEl.textContent = JSON.stringify(data, null, 2);
+                    resultWrapper.classList.remove('hidden');
 
-} else {
+                } else {
     alert("Gagal: Response tidak sesuai\n" + JSON.stringify(data, null, 2));
 }
                 
