@@ -12,26 +12,6 @@ async function expandUrl(url) {
 }
 
 /**
- * Wrapper untuk memberikan batas waktu (timeout) pada sebuah Promise
- * @param {Promise} promise - Fungsi ekstrak yang dijalankan
- * @param {number} ms - Waktu maksimal dalam milidetik (contoh: 8000 untuk 8 detik)
- * @param {string} name - Nama metode untuk keperluan log
- */
-const withTimeout = (promise, ms, name) => {
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-            reject(new Error(`Timeout: ${name} melebihi batas waktu ${ms / 1000} detik.`));
-        }, ms);
-    });
-
-    return Promise.race([promise, timeoutPromise]).finally(() => {
-        clearTimeout(timeoutId);
-    });
-};
-
-
-/**
  * [FALLBACK KHUSUS FB] Crawler Penyamaran FacebookExternalHit
  * Digunakan jika metadata profil gagal didapatkan dari metode lain.
  */
@@ -293,8 +273,6 @@ async function uploadToVidey(remoteUrl) {
   }
 }
 
-
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   const { url } = req.body;
@@ -309,7 +287,6 @@ export default async function handler(req, res) {
     let targetUrl = url;
     if (isTT || url.includes('bit.ly') || url.includes('t.co')) targetUrl = await expandUrl(url);
 
-    // Jalankan pencarian metadata secara paralel tanpa memblokir proses ekstrak video
     let metadataPromise;
     if (isFB || isIG) metadataPromise = getProfileName(targetUrl);
     else if (isTT) metadataPromise = getTikTokMetadata(targetUrl);
@@ -319,111 +296,71 @@ export default async function handler(req, res) {
     let finalVideoUrls = [];
     let methodUsed = "";
     let forceTitle = null;
-    
-    // === ARRAY LOG UNTUK MENCATAT FALLBACK ===
-    const attemptedFallbacks = [];
 
-    // === MENYUSUN STRATEGI / ANTREAN EKSTRAKSI ===
-    // Kita standarisasi agar semua fungsi mengembalikan format: { urls: [...], title: "..." }
-    const extractionStrategies = [];
-
-    // 1. Metode Khusus Platform (Ditaruh paling atas)
     if (isFB || isIG) {
-        extractionStrategies.push({
-            name: "Ferdev API",
-            execute: () => tryMetaBypass(targetUrl, isIG ? 'IG' : 'FB')
-        });
-    }
-    
-    if (isTT) {
-        extractionStrategies.push({
-            name: "TikWM Engine",
-            execute: async () => {
-                const ttUrl = await tryTikWMVideo(targetUrl);
-                return ttUrl ? { urls: [ttUrl] } : null;
-            }
-        });
-    }
-    
-    if (isX) {
-        extractionStrategies.push({
-            name: "VxTwitter Bypass",
-            execute: () => tryVxTwitter(targetUrl)
-        });
-    }
-
-    // 2. Metode Universal / Fallback Umum (Cobalt dan Wavy diunggulkan di atas Snapsave)
-    extractionStrategies.push({
-        name: "Cobalt System",
-        execute: async () => {
-            const cobUrl = await tryCobalt(targetUrl);
-            return cobUrl ? { urls: [cobUrl] } : null;
+        const platformCode = isIG ? 'IG' : 'FB';
+        const metaBypass = await tryMetaBypass(targetUrl, platformCode);
+        if (metaBypass && metaBypass.urls.length > 0) {
+            finalVideoUrls = metaBypass.urls;
+            if (metaBypass.title) forceTitle = metaBypass.title;
+            methodUsed = "Ferdev API";
         }
-    });
+    }
 
-    extractionStrategies.push({
-        name: "Wavy API",
-        execute: () => tryWavidl(targetUrl)
-    });
-
-    extractionStrategies.push({
-        name: "Snapsave", // Snapsave ditaruh di akhir karena sering stuck/lama
-        execute: async () => {
+    if (finalVideoUrls.length === 0) {
+        try {
             const snap = await snapsave(targetUrl);
             if (snap?.success && snap.data?.media?.length > 0) {
-                return { urls: [snap.data.media[0].url] };
+                finalVideoUrls = [snap.data.media[0].url];
+                methodUsed = "Snapsave";
             }
-            return null;
-        }
-    });
+        } catch (e) {}
+    }
 
-    // === EKSEKUSI PIPELINE DENGAN TIMEOUT ===
-    const TIMEOUT_MS = 8000; // Set timer 8 detik per metode
+    if (finalVideoUrls.length === 0 && isTT) {
+        const ttUrl = await tryTikWMVideo(targetUrl);
+        if (ttUrl) { finalVideoUrls = [ttUrl]; methodUsed = "TikWM Engine"; }
+    }
 
-    for (const strategy of extractionStrategies) {
-        attemptedFallbacks.push(strategy.name); // Catat metode yang sedang dicoba
-        try {
-            console.log(`⏳ Mencoba ekstrak menggunakan: ${strategy.name}...`);
-            
-            // Eksekusi fungsi dengan batas waktu
-            const result = await withTimeout(strategy.execute(), TIMEOUT_MS, strategy.name);
-
-            if (result && result.urls && result.urls.length > 0) {
-                finalVideoUrls = result.urls;
-                methodUsed = strategy.name;
-                if (result.title) forceTitle = result.title;
-                
-                console.log(`✅ Berhasil diekstrak oleh: ${strategy.name}`);
-                break; // Hentikan antrean jika sudah berhasil
-            }
-        } catch (error) {
-            console.log(`❌ Gagal/Skip (${strategy.name}): ${error.message}`);
-            // Lanjut ke iterasi fallback berikutnya
+    if (finalVideoUrls.length === 0 && isX) {
+        const vx = await tryVxTwitter(targetUrl);
+        if (vx && vx.urls.length > 0) {
+            finalVideoUrls = vx.urls;
+            forceTitle = vx.title;
+            methodUsed = "VxTwitter Bypass";
         }
     }
 
-    // === JIKA SEMUA FALLBACK GAGAL ===
     if (finalVideoUrls.length === 0) {
-        return res.status(404).json({ 
-            success: false, 
-            error: "Gagal ekstrak video setelah mencoba semua metode.",
-            attempted_fallbacks: attemptedFallbacks.join(", ") // Menampilkan: "Ferdev API, Cobalt System, Wavy API, Snapsave"
-        });
+        const cobUrl = await tryCobalt(targetUrl);
+        if (cobUrl) { finalVideoUrls = [cobUrl]; methodUsed = "Cobalt System"; }
     }
 
-    // ... (KODE UPLOAD KE VIDEY TETAP SAMA SEPERTI SEBELUMNYA) ...
+
+    if (finalVideoUrls.length === 0) {
+    const wavy = await tryWavidl(targetUrl);
+    if (wavy && wavy.urls.length > 0) {
+        finalVideoUrls = wavy.urls;
+        forceTitle = wavy.title;
+        methodUsed = wavy.method;
+    }
+}
+    
+
+    if (finalVideoUrls.length === 0) return res.status(404).json({ success: false, error: "Gagal ekstrak." });
+
     const videyLinks = [];
-    let totalSizeInBytes = 0; 
+    let totalSizeInBytes = 0; // === MODIFIKASI: Inisialisasi total file size ===
 
     for (const vUrl of finalVideoUrls) {
         const uploadResult = await uploadToVidey(vUrl);
         if (uploadResult) {
-            videyLinks.push(uploadResult.url);
-            totalSizeInBytes += uploadResult.size;
+            videyLinks.push(uploadResult.url); // Masukkan URL
+            totalSizeInBytes += uploadResult.size; // Tambahkan ukurannya
         }
     }
 
-    if (videyLinks.length === 0) return res.status(500).json({ success: false, error: "Upload ke Videy gagal." });
+    if (videyLinks.length === 0) return res.status(500).json({ success: false, error: "Upload gagal." });
 
     let profileName = await metadataPromise;
 
@@ -439,6 +376,7 @@ export default async function handler(req, res) {
         finalTitle = `${platformLabel} Video ${targetUrl.split('/').filter(p => p.length > 4).pop()?.substring(0, 8)}`;
     }
 
+    // === MODIFIKASI: Tambahkan fileSizeInBytes di JSON response ===
     return res.status(200).json({
       success: true,
       data: { 
