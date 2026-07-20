@@ -377,14 +377,42 @@
                         </a>  
                     </div>  
 
-                    <div class="flex flex-wrap gap-2">  
-                        ${(item.media || []).map((u, i) => `  
-                            <a href="${u}" target="_blank"  
-                                class="text-xs font-semibold bg-[#064e3b]/30 text-emerald-500 px-4 py-1.5 rounded-[0.5rem] border border-emerald-900/50 hover:bg-[#064e3b]/60 transition-all">  
-                                Media ${i + 1}  
-                            </a>  
-                        `).join('')}  
-                    </div>  
+                                <div class="flex flex-wrap gap-3 mt-2">  
+                ${(item.media || []).map((u, i) => {
+                    
+                    // 1. Amankan dan ubah format URL ke CDN mp4
+                    let videoCdn = u;
+                    const idMatch = u.match(/id=([^&]+)/);
+                    if (idMatch) {
+                        // Mengonversi format .../id=XYZ menjadi cdn.videy.co/XYZ.mp4
+                        videoCdn = `https://cdn.videy.co/${idMatch[1]}.mp4`;
+                    } else if (u.includes('videy.co/v/?id=')) {
+                        videoCdn = u.replace('https://videy.co/v/?id=', 'https://cdn.videy.co/') + '.mp4';
+                    }
+
+                    // 2. Render Mini Thumbnail dengan tag video
+                    return `
+                    <a href="${u}" target="_blank" 
+                        class="relative block w-14 h-14 rounded-lg overflow-hidden border-2 border-emerald-900/50 hover:border-emerald-500 hover:shadow-[0_0_10px_rgba(16,185,129,0.3)] transition-all duration-300 group">
+                        
+                        <!-- Video Mini Thumbnail (Memuat frame pertama di detik 0.1) -->
+                        <video src="${videoCdn}#t=0.1" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300 bg-slate-900" preload="metadata" muted playsinline></video>
+                        
+                        <!-- Overlay Hitam & Icon Play -->
+                        <div class="absolute inset-0 bg-black/40 flex items-center justify-center group-hover:bg-black/20 transition-all">
+                            <svg class="w-5 h-5 text-white/90 drop-shadow-md" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z"/>
+                            </svg>
+                        </div>
+                        
+                        <!-- Badge Nomor Urut -->
+                        <div class="absolute top-0 right-0 bg-black/70 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-bl-lg backdrop-blur-sm">
+                            ${i + 1}
+                        </div>
+                    </a>
+                    `;
+                }).join('')}  
+            </div> 
                 </div>`;  
             }).join('');  
                   
