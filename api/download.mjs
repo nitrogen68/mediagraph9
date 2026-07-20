@@ -362,30 +362,41 @@ export default async function handler(req, res) {
 
     if (videyLinks.length === 0) return res.status(500).json({ success: false, error: "Upload gagal." });
 
-    let profileName = await metadataPromise;
+        let profileName = await metadataPromise;
 
     if (isFB && (!profileName || profileName.toLowerCase().includes('facebook'))) {
         const fbCrawlerDetail = await getFacebookDetails(targetUrl);
         if (fbCrawlerDetail) profileName = fbCrawlerDetail;
     }
 
-    const platformLabel = isFB ? "FB" : isTT ? "TikTok" : isX ? "X" : isIG ? "IG" : "Media";
-    let finalTitle = forceTitle || profileName;
-    
-    if (!finalTitle || finalTitle.toLowerCase() === "reels" || finalTitle.toLowerCase() === "unknown") {
-        finalTitle = `${platformLabel} Video ${targetUrl.split('/').filter(p => p.length > 4).pop()?.substring(0, 8)}`;
+    // Jika title dari Ferdev/VxTwitter sudah ada formatnya, kita pisahkan atau rapikan
+    let authorText = profileName || "Tanpa nama";
+    let descText = forceTitle || "";
+
+    // Fallback jika forceTitle atau title dari API masih menyatu (contoh: "athenagothic Had to change...")
+    // Kita coba pisahkan kata pertama sebagai author jika author belum ada
+    if (!profileName && descText) {
+        const words = descText.split(' ');
+        if (words.length > 1) {
+            authorText = words[0]; // Kata pertama diasumsikan username
+            descText = words.slice(1).join(' '); // Sisanya adalah deskripsi
+        }
     }
 
-    // === MODIFIKASI: Tambahkan fileSizeInBytes di JSON response ===
+    // Format akhir yang bersih dikirim ke frontend
+    const finalDataTitle = descText && descText !== authorText ? descText : (finalTitle || "Media Video");
+
     return res.status(200).json({
       success: true,
       data: { 
-          title: finalTitle, 
+          author: authorText,     // <-- Kirim author terpisah
+          title: finalDataTitle,  // <-- Kirim deskripsi bersih
           videyUrls: videyLinks, 
           method: methodUsed,
           fileSizeInBytes: totalSizeInBytes 
       }
     });
+
 
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
