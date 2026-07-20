@@ -362,35 +362,48 @@ export default async function handler(req, res) {
 
     if (videyLinks.length === 0) return res.status(500).json({ success: false, error: "Upload gagal." });
 
-        let profileName = await metadataPromise;
+            
+    let profileName = await metadataPromise;
 
     if (isFB && (!profileName || profileName.toLowerCase().includes('facebook'))) {
         const fbCrawlerDetail = await getFacebookDetails(targetUrl);
         if (fbCrawlerDetail) profileName = fbCrawlerDetail;
     }
 
-    // Jika title dari Ferdev/VxTwitter sudah ada formatnya, kita pisahkan atau rapikan
-    let authorText = profileName || "Tanpa nama";
-    let descText = forceTitle || "";
+    const platformLabel = isFB ? "FB" : isTT ? "TikTok" : isX ? "X" : isIG ? "IG" : "Media";
 
-    // Fallback jika forceTitle atau title dari API masih menyatu (contoh: "athenagothic Had to change...")
-    // Kita coba pisahkan kata pertama sebagai author jika author belum ada
-    if (!profileName && descText) {
-        const words = descText.split(' ');
-        if (words.length > 1) {
-            authorText = words[0]; // Kata pertama diasumsikan username
-            descText = words.slice(1).join(' '); // Sisanya adalah deskripsi
+    // 1. Bersihkan dan atur Author (jika dari VxTwitter atau Wavy biasanya sudah bawa format author sendiri)
+    let authorText = profileName || "Tanpa nama";
+    let descText = "";
+
+    if (forceTitle) {
+        // Cek apakah forceTitle memiliki pola pemisah seperti "Author - Deskripsi" atau "@Author - Deskripsi"
+        if (forceTitle.includes(' - ')) {
+            const parts = forceTitle.split(' - ');
+            authorText = parts[0].replace('@', '').trim();
+            descText = parts.slice(1).join(' - ').trim();
+        } else {
+            // Jika tidak ada pemisah jelas, pisahkan kata pertama sebagai author cadangan jika profileName kosong
+            if (!profileName) {
+                const words = forceTitle.split(' ');
+                authorText = words[0].replace('@', '').trim();
+                descText = words.slice(1).join(' ').trim();
+            } else {
+                descText = forceTitle;
+            }
         }
     }
 
-    // Format akhir yang bersih dikirim ke frontend
-    const finalDataTitle = descText && descText !== authorText ? descText : (finalTitle || "Media Video");
+    // Fallback judul jika kosong
+    if (!descText || descText.toLowerCase() === "reels" || descText.toLowerCase() === "unknown") {
+        descText = `${platformLabel} Video ${targetUrl.split('/').filter(p => p.length > 4).pop()?.substring(0, 8) || ''}`;
+    }
 
     return res.status(200).json({
       success: true,
       data: { 
-          author: authorText,     // <-- Kirim author terpisah
-          title: finalDataTitle,  // <-- Kirim deskripsi bersih
+          author: authorText,     
+          title: descText,  
           videyUrls: videyLinks, 
           method: methodUsed,
           fileSizeInBytes: totalSizeInBytes 
