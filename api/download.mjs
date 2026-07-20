@@ -3,6 +3,7 @@ import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { fileURLToPath } from 'url';
 
 async function expandUrl(url) {
   try {
@@ -341,21 +342,36 @@ async function uploadToVidey(remoteUrl) {
     }
 
     const stats = fs.statSync(tempFilePath);
-    const downloadedSize = stats.size; 
+    const downloadedSize = stats.size;
 
     if (downloadedSize < 10240) throw new Error("File corrupt.");
+
     const fd = fs.openSync(tempFilePath, 'r');
     const bufferHead = Buffer.alloc(100);
     fs.readSync(fd, bufferHead, 0, 100, 0);
     fs.closeSync(fd);
     if (bufferHead.toString('utf8').toLowerCase().includes('<html')) throw new Error("HTML detected.");
 
+    const fileType = execSync(`file -b "${tempFilePath}"`).toString().toLowerCase();
+    if (!fileType.includes('mp4') && !fileType.includes('video') && !fileType.includes('quicktime')) {
+      throw new Error(`Unsupported file type: ${fileType}`);
+    }
+
     const cmd = `curl -s -X POST https://videy.co/api/upload -H "Origin: https://videy.co" -H "Referer: https://videy.co/" -F "file=@${tempFilePath};type=video/mp4"`;
     const result = JSON.parse(execSync(cmd).toString());
-    
+
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    
-    return result?.id ? { url: `https://videy.co/v/?id=${result.id}`, size: downloadedSize } : null;
+
+    if (!result?.id) return null;
+
+    const videyUrl = `https://videy.co/v/?id=${result.id}`;
+    const playableCheck = await fetch(videyUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const playableHtml = await playableCheck.text();
+    const looksPlayable = playableHtml.includes('<video') && !playableHtml.toLowerCase().includes('error') && !playableHtml.toLowerCase().includes('not found');
+
+    if (!looksPlayable) return null;
+
+    return { url: videyUrl, size: downloadedSize };
   } catch (error) {
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return null;
@@ -460,16 +476,29 @@ export default async function handler(req, res) {
 
     const videyLinks = [];
     let totalSizeInBytes = 0;
+    let uploadFailures = 0;
 
     for (const vUrl of finalVideoUrls) {
         const uploadResult = await uploadToVidey(vUrl);
         if (uploadResult) {
             videyLinks.push(uploadResult.url);
             totalSizeInBytes += uploadResult.size;
+        } else {
+            uploadFailures += 1;
         }
     }
 
-    if (videyLinks.length === 0) return res.status(500).json({ success: false, error: "Upload gagal." });
+    if (videyLinks.length === 0) {
+      return res.status(500).json({
+        success: false,
+        error: "Upload gagal. Tidak ada tautan video yang lolos validasi playable.",
+        debug: {
+          attemptedUrls: finalVideoUrls.length,
+          failedUploads: uploadFailures,
+          methodUsed
+        }
+      });
+    }
             
     let profileName = await metadataPromise;
 

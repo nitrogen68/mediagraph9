@@ -700,7 +700,8 @@ function closeVideoModal() {
                             <a href="${vUrl}" target="_blank" class="text-emerald-400 font-mono text-sm">${vUrl}</a>
                         </div>
                         <div class="aspect-video bg-black rounded-xl overflow-hidden mb-4">
-                            <video src="${videoSrc}" controls class="w-full h-full object-contain"></video>
+                            <video src="${videoSrc}" controls class="w-full h-full object-contain" onerror="this.closest('div').querySelector('.video-error').classList.remove('hidden'); this.classList.add('hidden');"></video>
+                            <div class="video-error hidden p-4 text-sm text-red-400 text-center">Video tidak bisa diputar dari host saat ini.</div>
                         </div>
                         <button onclick="copyToClipboard('${vUrl}', this)" 
                                 class="w-full bg-blue-600 py-4 rounded-xl font-bold text-white active:scale-95 transition-all">
