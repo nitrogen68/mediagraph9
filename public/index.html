@@ -376,6 +376,9 @@ function closeVideoModal() {
 }
 
 
+        
+        
+                    
         function renderHistory(filter = 'twitter') {
             currentHistoryTab = filter;
 
@@ -402,61 +405,83 @@ function closeVideoModal() {
             const prefix = getPlatformPrefix(filter);
 
             list.innerHTML = filteredHistory.map(item => {  
-    const cleanTitle = (item.title && item.title.trim() !== '') ? item.title.trim().replace(/\s+/g, ' ') : "Media Extracted";
-    const author = item.author || 'Tanpa nama';
-    
-    const cdnList = (item.media || []).map(u => `CDN: ${u}`).join('\n');  
-    const plainText = `${prefix}: @${author} - ${cleanTitle}\nSource: ${item.url}\n\n${cdnList}`;
-    const copyStr = encodeURIComponent(plainText);  
+                const cleanTitle = (item.title && item.title.trim() !== '') ? item.title.trim().replace(/\s+/g, ' ') : "Media Extracted";
+                const author = item.author || 'Tanpa nama';
+                
+                const cdnList = (item.media || []).map(u => `CDN: ${u}`).join('\n');  
+                const plainText = `${prefix}: @${author} - ${cleanTitle}\nSource: ${item.url}\n\n${cdnList}`;
+                const copyStr = encodeURIComponent(plainText);  
 
-    const thumbUrl = item.cover || 'https://via.placeholder.com/150/0f172a/94a3b8?text=Media';
-    
-    let timeStr = item.date;
-    if (timeStr.includes(',')) {
-        const t = timeStr.split(',')[1].trim().split(':');
-        if (t.length >= 2) timeStr = `${t[0]}.${t[1]}`;
-    }
+                // 1. AMBIL URL MEDIA PERTAMA UNTUK THUMBNAIL UTAMA KIRI
+                let mainVideoUrl = '';
+                if (item.media && item.media.length > 0) {
+                    const rawMedia = item.media[0];
+                    const idMatch = rawMedia.match(/id=([^&]+)/);
+                    if (idMatch) {
+                        mainVideoUrl = `https://cdn.videy.co/${idMatch[1]}.mp4`;
+                    } else if (rawMedia.includes('videy.co/v/?id=')) {
+                        mainVideoUrl = rawMedia.replace('https://videy.co/v/?id=', 'https://cdn.videy.co/') + '.mp4';
+                    } else {
+                        mainVideoUrl = rawMedia;
+                    }
+                }
 
-    return `  
-    <div id="history-card-${item.id}" 
-         onmouseenter="clearHighlight(this, ${item.id})"
-         onclick="clearHighlight(this, ${item.id})"
-         class="flex items-center gap-4 bg-[#1a1c29] p-3 rounded-[1rem] border ${item.isNew ? 'animate-flash-pink border-pink-500' : 'border-slate-800/60'} relative transition-all duration-500 mb-3 hover:bg-[#222536] cursor-pointer">
-         
-        <!-- Thumbnail Kiri -->
-        <img src="${thumbUrl}" class="w-[60px] h-[60px] rounded-xl object-cover bg-slate-900 flex-shrink-0 shadow-sm" onerror="this.src='https://via.placeholder.com/150/0f172a/94a3b8?text=Media'" alt="thumb">
-        
-        <!-- Area Teks Tengah -->
-        <div class="flex-1 min-w-0">  
-            <!-- Tampilkan Username/Author di baris pertama -->
-            <div class="text-[12px] font-bold text-blue-400 truncate mb-0.5">  
-                @${author}  
-            </div>
-            <!-- Tampilkan Judul/Deskripsi di baris kedua -->
-            <h4 class="font-semibold text-[13px] text-white truncate mb-1">  
-                ${cleanTitle}  
-            </h4>  
-            <div class="text-[10px] text-slate-500 flex items-center gap-1 truncate font-medium">  
-                <span>${timeStr}</span>
-            </div>  
-        </div>  
+                let timeStr = item.date;
+                if (timeStr.includes(',')) {
+                    const t = timeStr.split(',')[1].trim().split(':');
+                    if (t.length >= 2) timeStr = `${t[0]}.${t[1]}`;
+                }
 
-        <!-- Tombol Aksi Kanan -->
-        <div class="flex items-center gap-2 flex-shrink-0">
-            <button onclick="event.stopPropagation(); deleteHistory(${item.id})" 
-                class="w-9 h-9 rounded-full bg-slate-800/80 flex items-center justify-center text-red-500 hover:bg-red-500 hover:text-white transition-all border border-slate-700/50" title="Hapus">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
-            </button>
-            <button onclick="event.stopPropagation(); copyToClipboard(decodeURIComponent('${copyStr}'), this)" 
-                class="w-9 h-9 rounded-full bg-slate-800/80 flex items-center justify-center text-blue-400 hover:bg-blue-500 hover:text-white transition-all border border-slate-700/50" title="Download / Salin">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-            </button>
-        </div>  
-    </div>`;  
-}).join('');            
+                return `  
+                <div id="history-card-${item.id}" 
+                     onmouseenter="clearHighlight(this, ${item.id})"
+                     onclick="clearHighlight(this, ${item.id})"
+                     class="flex items-center gap-4 bg-[#1a1c29] p-3 rounded-[1rem] border ${item.isNew ? 'animate-flash-pink border-pink-500' : 'border-slate-800/60'} relative transition-all duration-500 mb-3 hover:bg-[#222536] cursor-pointer">
+                     
+                    <!-- Thumbnail Kiri (Diubah jadi Tag Video Mini + Klik untuk buka modal player) -->
+                    <div onclick="event.stopPropagation(); openVideoModal('${mainVideoUrl}')" 
+                        class="relative w-[60px] h-[60px] rounded-xl overflow-hidden bg-slate-900 flex-shrink-0 shadow-sm border border-slate-700/50 group cursor-pointer" title="Putar Video">
+                        <video src="${mainVideoUrl}#t=0.1" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" preload="metadata" muted playsinline></video>
+                        <div class="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-all">
+                            <svg class="w-4 h-4 text-white/90 drop-shadow" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        </div>
+                    </div>
+                    
+                    <!-- Area Teks Tengah -->
+                    <div class="flex-1 min-w-0">  
+                        <!-- Tampilkan Username/Author di baris pertama -->
+                        <div class="text-[12px] font-bold text-blue-400 truncate mb-0.5">  
+                            @${author}  
+                        </div>
+                        <!-- Tampilkan Judul/Deskripsi di baris kedua -->
+                        <h4 class="font-semibold text-[13px] text-white truncate mb-1">  
+                            ${cleanTitle}  
+                        </h4>  
+                        <div class="text-[10px] text-slate-500 flex items-center gap-1 truncate font-medium">  
+                            <span>${timeStr}</span>
+                        </div>  
+                    </div>  
+
+                    <!-- Tombol Aksi Kanan -->
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <button onclick="event.stopPropagation(); deleteHistory(${item.id})" 
+                            class="w-9 h-9 rounded-full bg-slate-800/80 flex items-center justify-center text-red-500 hover:bg-red-500 hover:text-white transition-all border border-slate-700/50" title="Hapus">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                        <button onclick="event.stopPropagation(); copyToClipboard(decodeURIComponent('${copyStr}'), this)" 
+                            class="w-9 h-9 rounded-full bg-slate-800/80 flex items-center justify-center text-blue-400 hover:bg-blue-500 hover:text-white transition-all border border-slate-700/50" title="Download / Salin">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        </button>
+                    </div>  
+                </div>`;  
+            }).join('');            
                   
             updateTabCounts();
         }
+
+
+
+                
 
         /* ==================================================
            TAB SYSTEM
