@@ -27,27 +27,19 @@ async function getFacebookDetails(url) {
         const titleMatch = html.match(/<meta property="og:title" content="(.*?)"/i);
         
         if (titleMatch) {
-            // 1. Decode HTML Entities dasar dulu
             let rawTitle = titleMatch[1]
                 .replace(/&#x27;/g, "'")
                 .replace(/&quot;/g, '"')
                 .replace(/&amp;/g, '&');
 
-            // 2. Pisahkan berdasarkan simbol pemisah umum Meta: # (hashtag), | (pipe), atau - (strip)
             let cleanName = rawTitle.split(/[#|\-·]/)[0].trim();
 
-            // 3. Jika setelah dipisahkan hasilnya terlalu pendek, 
-            // kemungkinan nama aslinya memang mengandung simbol tersebut.
-            // Kita gunakan filter cadangan untuk hanya membuang hashtag.
             if (cleanName.length < 2) {
                 cleanName = rawTitle.replace(/#\w+/g, '').trim();
             }
 
-            // 4. Baru bersihkan karakter aneh yang tersisa (estetika)
-            // Tetap izinkan spasi, titik, dan tanda petik agar nama seperti "O'Connor" tidak rusak.
             cleanName = cleanName.replace(/[^\w\d\s'.]/g, '').trim();
 
-            // 5. Validasi akhir: Jangan kembalikan jika judulnya cuma "Facebook" atau "Login"
             const blacklist = ["facebook", "log in", "masuk", "reels"];
             if (blacklist.some(word => cleanName.toLowerCase() === word)) {
                 return null;
@@ -118,8 +110,8 @@ async function tryMetaBypass(url, platform) {
             if (json.data.dlink) videos.push(json.data.dlink);
             if (json.data.metadata && json.data.metadata.title) {
                 fetchedTitle = json.data.metadata.username 
-                    ? `@${json.data.metadata.username} - ${json.data.metadata.title.substring(0, 45)}...`
-                    : json.data.metadata.title.substring(0, 45) + "...";
+                    ? `@${json.data.metadata.username} - ${json.data.metadata.title.substring(0, 100)}`
+                    : json.data.metadata.title.substring(0, 100);
             }
         } 
         else if (platform === 'FB') {
@@ -129,7 +121,7 @@ async function tryMetaBypass(url, platform) {
                 videos.push(vidUrl);
             }
             if (json.data.title && json.data.title.toLowerCase() !== "unknown") {
-                fetchedTitle = json.data.title.substring(0, 45) + "...";
+                fetchedTitle = json.data.title.substring(0, 100);
             }
         }
         if (videos.length > 0) {
@@ -153,7 +145,6 @@ async function tryVxTwitter(url) {
         if (videos.length > 0) {
             let rawText = json.text || "Video";
             let cleanText = rawText.replace(/https?:\/\/\S+/g, '').trim();
-            if (cleanText.length > 45) cleanText = cleanText.substring(0, 45) + "...";
             return { urls: videos, title: `@${json.user_screen_name} - ${cleanText || "Video"}` };
         }
     }
@@ -193,24 +184,20 @@ async function tryWavidl(url) {
         
         const wavyJson = await wavyRes.json();
 
-        // Struktur Wavy: { status: true, result: { url: [...], title: "...", author: "..." } }
         if (wavyJson?.status && wavyJson?.result) {
             let wavyData = wavyJson.result;
             let wavyUrls = [];
 
-            // Wavy kadang balikin array url, kadang string
             if (Array.isArray(wavyData.url)) wavyUrls = wavyData.url;
             else if (typeof wavyData.url === 'string') wavyUrls = [wavyData.url];
-            else if (Array.isArray(wavyData.urls)) wavyUrls = wavyData.urls; // jaga2
+            else if (Array.isArray(wavyData.urls)) wavyUrls = wavyData.urls;
 
-            // Ambil yang .mp4 aja
             wavyUrls = wavyUrls.filter(u => u.includes('.mp4'));
 
             if (wavyUrls.length > 0) {
-                // Ambil title dari wavy
                 let title = null;
                 if (wavyData.title) {
-                    title = `${wavyData.author || 'User'} - ${wavyData.title.substring(0, 45)}...`;
+                    title = `${wavyData.author || 'User'} - ${wavyData.title}`;
                 }
 
                 return { 
@@ -226,7 +213,6 @@ async function tryWavidl(url) {
     return null;
 }
 
-// === MODIFIKASI: uploadToVidey SEKARANG MENGEMBALIKAN OBJECT {url, size} ===
 async function uploadToVidey(remoteUrl) {
   const tempFilePath = path.join(os.tmpdir(), `vid_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp4`);
   try {
@@ -249,7 +235,6 @@ async function uploadToVidey(remoteUrl) {
         fs.writeFileSync(tempFilePath, buffer);
     }
 
-    // 1. Ambil ukuran file dari local file system
     const stats = fs.statSync(tempFilePath);
     const downloadedSize = stats.size; 
 
@@ -265,7 +250,6 @@ async function uploadToVidey(remoteUrl) {
     
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     
-    // 2. Kembalikan URL sekaligus Size
     return result?.id ? { url: `https://videy.co/v/?id=${result.id}`, size: downloadedSize } : null;
   } catch (error) {
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
@@ -336,32 +320,29 @@ export default async function handler(req, res) {
         if (cobUrl) { finalVideoUrls = [cobUrl]; methodUsed = "Cobalt System"; }
     }
 
-
     if (finalVideoUrls.length === 0) {
-    const wavy = await tryWavidl(targetUrl);
-    if (wavy && wavy.urls.length > 0) {
-        finalVideoUrls = wavy.urls;
-        forceTitle = wavy.title;
-        methodUsed = wavy.method;
+        const wavy = await tryWavidl(targetUrl);
+        if (wavy && wavy.urls.length > 0) {
+            finalVideoUrls = wavy.urls;
+            forceTitle = wavy.title;
+            methodUsed = wavy.method;
+        }
     }
-}
-    
 
     if (finalVideoUrls.length === 0) return res.status(404).json({ success: false, error: "Gagal ekstrak." });
 
     const videyLinks = [];
-    let totalSizeInBytes = 0; // === MODIFIKASI: Inisialisasi total file size ===
+    let totalSizeInBytes = 0;
 
     for (const vUrl of finalVideoUrls) {
         const uploadResult = await uploadToVidey(vUrl);
         if (uploadResult) {
-            videyLinks.push(uploadResult.url); // Masukkan URL
-            totalSizeInBytes += uploadResult.size; // Tambahkan ukurannya
+            videyLinks.push(uploadResult.url);
+            totalSizeInBytes += uploadResult.size;
         }
     }
 
     if (videyLinks.length === 0) return res.status(500).json({ success: false, error: "Upload gagal." });
-
             
     let profileName = await metadataPromise;
 
@@ -372,18 +353,16 @@ export default async function handler(req, res) {
 
     const platformLabel = isFB ? "FB" : isTT ? "TikTok" : isX ? "X" : isIG ? "IG" : "Media";
 
-    // 1. Bersihkan dan atur Author (jika dari VxTwitter atau Wavy biasanya sudah bawa format author sendiri)
+    // --- LOGIKA PEMISAHAN AUTHOR & TITLE YANG BERSIH ---
     let authorText = profileName || "Tanpa nama";
     let descText = "";
 
     if (forceTitle) {
-        // Cek apakah forceTitle memiliki pola pemisah seperti "Author - Deskripsi" atau "@Author - Deskripsi"
         if (forceTitle.includes(' - ')) {
             const parts = forceTitle.split(' - ');
             authorText = parts[0].replace('@', '').trim();
             descText = parts.slice(1).join(' - ').trim();
         } else {
-            // Jika tidak ada pemisah jelas, pisahkan kata pertama sebagai author cadangan jika profileName kosong
             if (!profileName) {
                 const words = forceTitle.split(' ');
                 authorText = words[0].replace('@', '').trim();
@@ -394,7 +373,6 @@ export default async function handler(req, res) {
         }
     }
 
-    // Fallback judul jika kosong
     if (!descText || descText.toLowerCase() === "reels" || descText.toLowerCase() === "unknown") {
         descText = `${platformLabel} Video ${targetUrl.split('/').filter(p => p.length > 4).pop()?.substring(0, 8) || ''}`;
     }
@@ -409,7 +387,6 @@ export default async function handler(req, res) {
           fileSizeInBytes: totalSizeInBytes 
       }
     });
-
 
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
