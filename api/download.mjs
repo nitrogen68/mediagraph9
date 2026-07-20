@@ -185,6 +185,47 @@ async function tryCobalt(url) {
   return null;
 }
 
+async function tryWavidl(url) {
+    console.log(`🌊 [WAVY] Mencoba Wavy API Fallback...`);
+    try {
+        const wavyRes = await fetch(`https://wavy.netraux.eu.cc/api/download?url=${encodeURIComponent(url)}`);
+        if (!wavyRes.ok) return null;
+        
+        const wavyJson = await wavyRes.json();
+
+        // Struktur Wavy: { status: true, result: { url: [...], title: "...", author: "..." } }
+        if (wavyJson?.status && wavyJson?.result) {
+            let wavyData = wavyJson.result;
+            let wavyUrls = [];
+
+            // Wavy kadang balikin array url, kadang string
+            if (Array.isArray(wavyData.url)) wavyUrls = wavyData.url;
+            else if (typeof wavyData.url === 'string') wavyUrls = [wavyData.url];
+            else if (Array.isArray(wavyData.urls)) wavyUrls = wavyData.urls; // jaga2
+
+            // Ambil yang .mp4 aja
+            wavyUrls = wavyUrls.filter(u => u.includes('.mp4'));
+
+            if (wavyUrls.length > 0) {
+                // Ambil title dari wavy
+                let title = null;
+                if (wavyData.title) {
+                    title = `${wavyData.author || 'User'} - ${wavyData.title.substring(0, 45)}...`;
+                }
+
+                return { 
+                    urls: wavyUrls, 
+                    title: title,
+                    method: "Wavy API" 
+                };
+            }
+        }
+    } catch (e) {
+        console.log("Wavy Error:", e.message)
+    }
+    return null;
+}
+
 // === MODIFIKASI: uploadToVidey SEKARANG MENGEMBALIKAN OBJECT {url, size} ===
 async function uploadToVidey(remoteUrl) {
   const tempFilePath = path.join(os.tmpdir(), `vid_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp4`);
@@ -294,6 +335,17 @@ export default async function handler(req, res) {
         const cobUrl = await tryCobalt(targetUrl);
         if (cobUrl) { finalVideoUrls = [cobUrl]; methodUsed = "Cobalt System"; }
     }
+
+
+    if (finalVideoUrls.length === 0) {
+    const wavy = await tryWavidl(targetUrl);
+    if (wavy && wavy.urls.length > 0) {
+        finalVideoUrls = wavy.urls;
+        forceTitle = wavy.title;
+        methodUsed = wavy.method;
+    }
+}
+    
 
     if (finalVideoUrls.length === 0) return res.status(404).json({ success: false, error: "Gagal ekstrak." });
 
