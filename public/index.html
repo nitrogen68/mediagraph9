@@ -469,9 +469,13 @@ function closeVideoModal() {
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
                         </button>
                         <button onclick="event.stopPropagation(); copyToClipboard(decodeURIComponent('${copyStr}'), this)" 
-                            class="w-9 h-9 rounded-full bg-slate-800/80 flex items-center justify-center text-blue-400 hover:bg-blue-500 hover:text-white transition-all border border-slate-700/50" title="Download / Salin">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                        </button>
+    class="w-9 h-9 rounded-full bg-slate-800/80 flex items-center justify-center text-blue-400 hover:bg-blue-500 hover:text-white transition-all border border-slate-700/50" title="Salin Info">
+    <!-- ICON COPY -->
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <rect x="8" y="8" width="12" height="12" rx="2"></rect>
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16 8v-2a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path>
+    </svg>
+</button>
                     </div>  
                 </div>`;  
             }).join('');            
@@ -664,13 +668,25 @@ function closeVideoModal() {
             }
         }
 
-        function renderSingleVideo(data, targetUrl) {
+                function renderSingleVideo(data, targetUrl) {
             const container = document.getElementById('dynamicVideosContainer');
             container.innerHTML = '';
             container.classList.remove('hidden');
 
             const platform = getDomainCategory(targetUrl);
-            const displayTitle = `${platform}: ${data.title}`;
+            
+            // --- PEMBERSIH JUDUL DARI QUERY URL (?) ---
+            let rawTitle = data.title || 'Media Video';
+            if (rawTitle.includes('?igsh') || rawTitle.includes('?')) {
+                rawTitle = rawTitle.split('?')[0].trim();
+                if (rawTitle.toLowerCase() === 'ig video' || rawTitle.toLowerCase() === 'instagram video') {
+                    rawTitle = 'Instagram Reel Video';
+                }
+            }
+
+            // Gabungkan author dan judul dengan rapi
+            const authorPart = (data.author && data.author !== 'Tanpa nama') ? `@${data.author} - ` : '';
+            const displayTitle = `${platform.toUpperCase()}: ${authorPart}${rawTitle}`;
 
             const videosHtml = (data.videyUrls || []).map((vUrl, index) => {
                 const videoSrc = vUrl.replace('https://videy.co/v/?id=', 'https://cdn.videy.co/') + '.mp4';
@@ -704,6 +720,7 @@ function closeVideoModal() {
             container.appendChild(wrapper);
         }
 
+        
         /* ==================================================
            HELPERS & MODALS
         ================================================== */
